@@ -60,8 +60,8 @@ func main() {
 		ManresaScalar.pullFrames(10)
 	} */
 
-	//ManresaScalar.averageFrames(512)
-	ManresaScalar.AverageFrames(512)
-	//ManresaScalar.pullFrames(50)
+	//ManresaScalar.AverageFrames(512)
+	//ManresaScalar.PullFrames(50)
+	ManresaScalar.HorizontalTimestack(512)
 	//ManresaVector.pullFrames(50)
 }

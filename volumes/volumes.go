@@ -10,6 +10,8 @@ import (
 
 // TODO add scalar timestack function
 
+var encoder = &png.Encoder{CompressionLevel: png.NoCompression}
+
 type Pixel struct {
 	R uint64
 	G uint64
@@ -86,8 +88,45 @@ func (v *Scalar) PullFrames(numFrames int) error {
 		}
 
 		out, _ := os.Create(fmt.Sprintf("temp/scalar%d.png", currFrame))
-		png.Encode(out, img)
+		encoder.Encode(out, img)
 	}
+
+	return nil
+}
+
+func (v *Scalar) HorizontalTimestack(numFrames int) error {
+	if err := v.Open(); err != nil {
+		return err
+	}
+	defer v.Close()
+
+	frame := make([]byte, v.height*v.width*3)
+
+	img := image.NewRGBA(image.Rectangle{
+		image.Point{0, 0},
+		image.Point{numFrames, v.height},
+	})
+	color := color.RGBA{0, 0, 0, 0xFF}
+	cursor := 0
+
+	for currFrame := 0; currFrame < numFrames; currFrame++ {
+		if _, err := v.Read(frame); err != nil {
+			return err
+		}
+		xIndex := 900
+		for y := 0; y < v.height; y++ {
+			color.R = frame[xIndex]
+			color.G = frame[xIndex+1]
+			color.B = frame[xIndex+2]
+			img.Set(cursor, y, color)
+			xIndex += v.width * 3
+			//fmt.Println(cursor, y)
+		}
+		cursor++
+	}
+
+	out, _ := os.Create(fmt.Sprintf("temp/hstack%d.png", numFrames))
+	encoder.Encode(out, img)
 
 	return nil
 }
@@ -136,7 +175,7 @@ func (v *Scalar) AverageFrames(numFrames int) error {
 	}
 
 	out, _ := os.Create(fmt.Sprintf("temp/scalar_avg%d.png", numFrames))
-	png.Encode(out, img) // TODO check error
+	encoder.Encode(out, img) // TODO check error
 
 	return nil
 }
