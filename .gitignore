@@ -1,0 +1,5 @@
+temp/
+*.zip
+*.raw
+oldmain
+readme.txt
