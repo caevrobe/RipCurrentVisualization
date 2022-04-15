@@ -1,14 +1,21 @@
 package volumes
 
 import (
+	"PA1/framebuffer"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"os"
+
+	"github.com/llgcode/draw2d/draw2dimg"
+	"github.com/llgcode/draw2d/draw2dkit"
 )
 
-// TODO add scalar timestack function
+const (
+	SZ_UINT32 = 4
+	SZ_UCHAR  = 1
+)
 
 var encoder = &png.Encoder{CompressionLevel: png.NoCompression}
 
@@ -36,9 +43,8 @@ func NewVolume(filepath string, width, height, depth int) *Volume {
 	}
 }
 
-// TODO test if file closes when v.file does
 // TODO test if v.File methods are accessible from outside package
-func (v *Volume) Open() error {
+func (v *Volume) open() error {
 	file, err := os.OpenFile(v.filepath, os.O_RDONLY, 0)
 	if err != nil {
 		return err
@@ -49,6 +55,14 @@ func (v *Volume) Open() error {
 	return nil
 }
 
+// creates image canvas with volume dimensions
+func (v Volume) createImage() *image.RGBA {
+	return image.NewRGBA(image.Rectangle{
+		image.Point{0, 0},
+		image.Point{v.width, v.height},
+	})
+}
+
 /* Scalar Volume ************************************************************/
 
 type Scalar struct {
@@ -57,32 +71,28 @@ type Scalar struct {
 
 // TODO check for EOF or make sure numFrames doesn't exceed v.depth
 func (v *Scalar) PullFrames(numFrames int) error {
-	if err := v.Open(); err != nil {
+	if err := v.open(); err != nil {
 		return err
 	}
 	defer v.Close()
 
-	frame := make([]byte, v.height*v.width*3)
+	frame := framebuffer.New(v.width, v.height, SZ_UCHAR, 3)
 
 	for currFrame := 0; currFrame < numFrames; currFrame++ {
-		cursor := 0
-		if _, err := v.Read(frame); err != nil {
+		frame.Reset()
+		if _, err := v.Read(frame.Buffer); err != nil {
 			return err
 		}
 
 		// TODO check read correct # of bytes
 
-		img := image.NewRGBA(image.Rectangle{
-			image.Point{0, 0},
-			image.Point{v.width, v.height},
-		})
+		img := v.createImage()
 		color := color.RGBA{0, 0, 0, 0xFF}
 		for y := 0; y < v.height; y++ {
 			for x := 0; x < v.width; x++ {
-				color.R = frame[cursor]
-				color.G = frame[cursor+1]
-				color.B = frame[cursor+2]
-				cursor += 3
+				color.R = byte(frame.Next().(int))
+				color.G = byte(frame.Next().(int))
+				color.B = byte(frame.Next().(int))
 				img.Set(x, y, color)
 			}
 		}
@@ -95,12 +105,12 @@ func (v *Scalar) PullFrames(numFrames int) error {
 }
 
 func (v *Scalar) HorizontalTimestack(numFrames int) error {
-	if err := v.Open(); err != nil {
+	if err := v.open(); err != nil {
 		return err
 	}
 	defer v.Close()
 
-	frame := make([]byte, v.height*v.width*3)
+	frame := framebuffer.New(v.width, v.height, SZ_UCHAR, 3)
 
 	img := image.NewRGBA(image.Rectangle{
 		image.Point{0, 0},
@@ -110,17 +120,16 @@ func (v *Scalar) HorizontalTimestack(numFrames int) error {
 	cursor := 0
 
 	for currFrame := 0; currFrame < numFrames; currFrame++ {
-		if _, err := v.Read(frame); err != nil {
+		if _, err := v.Read(frame.Buffer); err != nil {
 			return err
 		}
 		xIndex := 900
 		for y := 0; y < v.height; y++ {
-			color.R = frame[xIndex]
-			color.G = frame[xIndex+1]
-			color.B = frame[xIndex+2]
+			color.R = frame.Buffer[xIndex]
+			color.G = frame.Buffer[xIndex+1]
+			color.B = frame.Buffer[xIndex+2]
 			img.Set(cursor, y, color)
 			xIndex += v.width * 3
-			//fmt.Println(cursor, y)
 		}
 		cursor++
 	}
@@ -132,7 +141,7 @@ func (v *Scalar) HorizontalTimestack(numFrames int) error {
 }
 
 func (v *Scalar) AverageFrames(numFrames int) error {
-	if err := v.Open(); err != nil {
+	if err := v.open(); err != nil {
 		return err
 	}
 	defer v.Close()
@@ -141,10 +150,8 @@ func (v *Scalar) AverageFrames(numFrames int) error {
 	frame := make([]byte, v.height*v.width*3)
 
 	avg := make([]Pixel, v.width*v.height)
-	img := image.NewRGBA(image.Rectangle{
-		image.Point{0, 0},
-		image.Point{v.width, v.height},
-	})
+
+	img := v.createImage()
 
 	for currFrame := 0; currFrame < numFrames; currFrame++ {
 		if _, err := v.Read(frame); err != nil {
@@ -170,12 +177,13 @@ func (v *Scalar) AverageFrames(numFrames int) error {
 			color.G = uint8(avg[cursor].G / numFrames_64)
 			color.B = uint8(avg[cursor].B / numFrames_64)
 			img.Set(x, y, color)
+
 			cursor++
 		}
 	}
 
 	out, _ := os.Create(fmt.Sprintf("temp/scalar_avg%d.png", numFrames))
-	encoder.Encode(out, img) // TODO check error
+	encoder.Encode(out, img)
 
 	return nil
 }
@@ -184,4 +192,21 @@ func (v *Scalar) AverageFrames(numFrames int) error {
 
 type Vector struct {
 	*Volume
+}
+
+func (v *Vector) PullFrames(numFrames int) error {
+	img := image.NewRGBA(image.Rectangle{
+		image.Point{0, 0},
+		image.Point{v.width, v.height},
+	})
+	color := color.RGBA{0, 255, 0, 0xFF}
+	gc := draw2dimg.NewGraphicContext(img)
+	gc.SetFillColor(color)
+	draw2dkit.Circle(gc, 345, 546, 200)
+	gc.Fill()
+
+	out, _ := os.Create(fmt.Sprintf("temp/scalar%d.png", 2))
+	png.Encode(out, img)
+
+	return nil
 }
