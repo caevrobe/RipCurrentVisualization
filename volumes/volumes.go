@@ -90,12 +90,19 @@ func (v *Scalar) PullFrames(numFrames int) error {
 		color := color.RGBA{0, 0, 0, 0xFF}
 		for y := 0; y < v.height; y++ {
 			for x := 0; x < v.width; x++ {
-				color.R = byte(frame.Next().(int))
-				color.G = byte(frame.Next().(int))
-				color.B = byte(frame.Next().(int))
+				color.R = byte(frame.Next().(int32))
+				color.G = byte(frame.Next().(int32))
+				color.B = byte(frame.Next().(int32))
 				img.Set(x, y, color)
 			}
 		}
+
+		/* gc := draw2dimg.NewGraphicContext(img)
+		gc.SetFillColor(color)
+		gc.MoveTo(150, 675)
+		gc.LineTo(1200, 330)
+		gc.SetLineWidth(10)
+		gc.Stroke() */
 
 		out, _ := os.Create(fmt.Sprintf("temp/scalar%d.png", currFrame))
 		encoder.Encode(out, img)
@@ -104,7 +111,7 @@ func (v *Scalar) PullFrames(numFrames int) error {
 	return nil
 }
 
-func (v *Scalar) HorizontalTimestack(numFrames int) error {
+func (v *Scalar) HorizontalTimestack(numFrames int, xIndex int) error {
 	if err := v.open(); err != nil {
 		return err
 	}
@@ -123,18 +130,18 @@ func (v *Scalar) HorizontalTimestack(numFrames int) error {
 		if _, err := v.Read(frame.Buffer); err != nil {
 			return err
 		}
-		xIndex := 900
+		x := (xIndex - 1) * 3
 		for y := 0; y < v.height; y++ {
-			color.R = frame.Buffer[xIndex]
-			color.G = frame.Buffer[xIndex+1]
-			color.B = frame.Buffer[xIndex+2]
+			color.R = frame.Buffer[x]
+			color.G = frame.Buffer[x+1]
+			color.B = frame.Buffer[x+2]
 			img.Set(cursor, y, color)
-			xIndex += v.width * 3
+			x += v.width * 3
 		}
 		cursor++
 	}
 
-	out, _ := os.Create(fmt.Sprintf("temp/hstack%d.png", numFrames))
+	out, _ := os.Create(fmt.Sprintf("temp/hstack%d_%d.png", numFrames, xIndex))
 	encoder.Encode(out, img)
 
 	return nil
@@ -188,13 +195,91 @@ func (v *Scalar) AverageFrames(numFrames int) error {
 	return nil
 }
 
+/* func (v *Scalar) Animate() error {
+	entries, err := os.ReadDir("temp")
+	if err != nil {
+		return err
+	}
+
+	outgif := &gif.GIF{}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			if entry.Name()[:6] == "scalar" { // bad
+				f, err := os.Open("temp/" + entry.Name())
+				if err != nil {
+					return err
+				}
+				in, err := png.Decode(f)
+				if err != nil {
+					fmt.Println(entry.Name())
+					return err
+				}
+
+				outgif.Image = append(outgif.Image, in.(*image.RGBA))
+				outgif.Delay = append(outgif.Delay, 0)
+			}
+		}
+	}
+
+	f, _ := os.OpenFile("scalar_anim.gif", os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.ModePerm)
+	defer f.Close()
+	gif.EncodeAll(f, outgif)
+
+	return nil
+} */
+
 /* Vector Volume ************************************************************/
 
 type Vector struct {
 	*Volume
 }
 
+// https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
 func (v *Vector) PullFrames(numFrames int) error {
+	if err := v.open(); err != nil {
+		return err
+	}
+	defer v.Close()
+
+	frame := framebuffer.New(v.width, v.height, SZ_UINT32, 2)
+
+	for currFrame := 0; currFrame < numFrames; currFrame++ {
+		frame.Reset()
+		if _, err := v.Read(frame.Buffer); err != nil {
+			return err
+		}
+
+		// TODO check read correct # of bytes
+
+		out, err := os.OpenFile(fmt.Sprintf("temp/out%d.txt", currFrame), os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModePerm)
+		if err != nil {
+			return err
+		}
+		defer out.Close()
+
+		d := make(map[int32]struct{})
+		for y := 0; y < v.height; y++ {
+			for x := 0; x < v.width; x++ {
+				v_x := frame.Next().(int32)
+				v_y := frame.Next().(int32)
+
+				d[v_x] = struct{}{}
+				d[v_y] = struct{}{}
+
+				toWrite := fmt.Sprintf("X: %d Y: %d | ", v_x, v_y)
+				out.WriteString(toWrite)
+			}
+			out.WriteString("\n")
+		}
+
+		fmt.Println(d)
+
+	}
+
+	return nil
+}
+
+func (v *Vector) PullFrames2(numFrames int) error {
 	img := image.NewRGBA(image.Rectangle{
 		image.Point{0, 0},
 		image.Point{v.width, v.height},
@@ -209,4 +294,11 @@ func (v *Vector) PullFrames(numFrames int) error {
 	png.Encode(out, img)
 
 	return nil
+}
+
+/* Composite Volume *********************************************************/
+
+type Composite struct {
+	*Scalar
+	*Vector
 }

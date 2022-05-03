@@ -29,10 +29,10 @@ func (b *FrameBuffer) Next() interface{} {
 	defer func() { b.cursor += b.unitSize }()
 
 	slice := b.Buffer[b.cursor : b.cursor+b.unitSize]
-	value := 0
+	value := int32(0)
 
 	for i := 0; i < b.unitSize; i++ {
-		value += int(slice[i])
+		value += int32(slice[i])
 
 		if i != b.unitSize-1 {
 			value <<= 8
