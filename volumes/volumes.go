@@ -2,11 +2,15 @@ package volumes
 
 import (
 	"PA1/framebuffer"
+	"bufio"
+	"encoding/csv"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"os"
+	"strconv"
 
 	"github.com/llgcode/draw2d/draw2dimg"
 	"github.com/llgcode/draw2d/draw2dkit"
@@ -96,13 +100,6 @@ func (v *Scalar) PullFrames(numFrames int) error {
 				img.Set(x, y, color)
 			}
 		}
-
-		/* gc := draw2dimg.NewGraphicContext(img)
-		gc.SetFillColor(color)
-		gc.MoveTo(150, 675)
-		gc.LineTo(1200, 330)
-		gc.SetLineWidth(10)
-		gc.Stroke() */
 
 		out, _ := os.Create(fmt.Sprintf("temp/scalar%d.png", currFrame))
 		encoder.Encode(out, img)
@@ -195,110 +192,126 @@ func (v *Scalar) AverageFrames(numFrames int) error {
 	return nil
 }
 
-/* func (v *Scalar) Animate() error {
-	entries, err := os.ReadDir("temp")
-	if err != nil {
-		return err
-	}
-
-	outgif := &gif.GIF{}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			if entry.Name()[:6] == "scalar" { // bad
-				f, err := os.Open("temp/" + entry.Name())
-				if err != nil {
-					return err
-				}
-				in, err := png.Decode(f)
-				if err != nil {
-					fmt.Println(entry.Name())
-					return err
-				}
-
-				outgif.Image = append(outgif.Image, in.(*image.RGBA))
-				outgif.Delay = append(outgif.Delay, 0)
-			}
-		}
-	}
-
-	f, _ := os.OpenFile("scalar_anim.gif", os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.ModePerm)
-	defer f.Close()
-	gif.EncodeAll(f, outgif)
-
-	return nil
-} */
-
 /* Vector Volume ************************************************************/
 
 type Vector struct {
 	*Volume
 }
 
-// https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
-func (v *Vector) PullFrames(numFrames int) error {
-	if err := v.open(); err != nil {
-		return err
-	}
-	defer v.Close()
-
-	frame := framebuffer.New(v.width, v.height, SZ_UINT32, 2)
-
-	for currFrame := 0; currFrame < numFrames; currFrame++ {
-		frame.Reset()
-		if _, err := v.Read(frame.Buffer); err != nil {
-			return err
-		}
-
-		// TODO check read correct # of bytes
-
-		out, err := os.OpenFile(fmt.Sprintf("temp/out%d.txt", currFrame), os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModePerm)
-		if err != nil {
-			return err
-		}
-		defer out.Close()
-
-		d := make(map[int32]struct{})
-		for y := 0; y < v.height; y++ {
-			for x := 0; x < v.width; x++ {
-				v_x := frame.Next().(int32)
-				v_y := frame.Next().(int32)
-
-				d[v_x] = struct{}{}
-				d[v_y] = struct{}{}
-
-				toWrite := fmt.Sprintf("X: %d Y: %d | ", v_x, v_y)
-				out.WriteString(toWrite)
-			}
-			out.WriteString("\n")
-		}
-
-		fmt.Println(d)
-
-	}
-
-	return nil
-}
-
-func (v *Vector) PullFrames2(numFrames int) error {
-	img := image.NewRGBA(image.Rectangle{
-		image.Point{0, 0},
-		image.Point{v.width, v.height},
-	})
-	color := color.RGBA{0, 255, 0, 0xFF}
-	gc := draw2dimg.NewGraphicContext(img)
-	gc.SetFillColor(color)
-	draw2dkit.Circle(gc, 345, 546, 200)
-	gc.Fill()
-
-	out, _ := os.Create(fmt.Sprintf("temp/scalar%d.png", 2))
-	png.Encode(out, img)
-
-	return nil
-}
-
 /* Composite Volume *********************************************************/
+
+type Point struct {
+	X float64
+	Y float64
+}
 
 type Composite struct {
 	*Scalar
 	*Vector
+	LeftEnd, RightEnd Point
+}
+
+// b = y - mx
+// m = (y2-y1)/(x2-x1)
+// line length (d) = sqrt((x2-x1)^2+(y2-y1)^2)
+// image top left is (0, 0)
+// distance between buoys = line length/num buoys
+
+func (v *Composite) Timeline(numFrames, numBuoys int) error {
+	if err := v.Scalar.open(); err != nil {
+		return err
+	}
+	defer v.Scalar.Close()
+	if err := v.Vector.open(); err != nil {
+		return err
+	}
+	defer v.Vector.Close()
+
+	v_reader := csv.NewReader(bufio.NewReader(v.Vector.File))
+	type temp struct {
+		X int
+		Y int
+	}
+
+	s_frame := framebuffer.New(v.Scalar.width, v.Scalar.height, SZ_UCHAR, 3)
+	v_frame := framebuffer.New(v.Vector.width, v.Vector.height, SZ_UINT32, 2)
+
+	m := (float64(v.RightEnd.Y) - float64(v.LeftEnd.Y)) / (float64(v.RightEnd.X) - float64(v.LeftEnd.X))
+	b := float64(v.RightEnd.Y - m*v.RightEnd.X)
+	dist := (v.RightEnd.X - v.LeftEnd.X) / (float64(numBuoys - 1))
+
+	var points []Point
+	for i := float64(0); int(i) < numBuoys; i++ {
+		x := float64(v.LeftEnd.X) + dist*i
+		points = append(points, Point{math.Round(x), math.Round(m*x + b)})
+	}
+
+	_color := color.RGBA{0, 0, 0, 0xFF}
+
+	for currFrame := 0; currFrame < numFrames; currFrame++ {
+		s_frame.Reset()
+		v_frame.Reset()
+		if _, err := v.Scalar.Read(s_frame.Buffer); err != nil {
+			return err
+		}
+
+		/* if _, err := v.Vector.Read(v_frame.Buffer); err != nil {
+			return err
+		} */
+
+		// TODO check read correct # of bytes
+
+		img := v.Scalar.createImage()
+		for y := 0; y < v.Scalar.height; y++ {
+			for x := 0; x < v.Scalar.width; x++ {
+				_color.R = byte(s_frame.Next().(int32))
+				_color.G = byte(s_frame.Next().(int32))
+				_color.B = byte(s_frame.Next().(int32))
+				img.Set(x, y, _color)
+			}
+		}
+
+		var pixels []temp
+		for n := 0; n < v.Vector.height*v.Vector.width; n++ {
+			px, _ := v_reader.Read()
+			x, _ := strconv.Atoi(px[0])
+			y, _ := strconv.Atoi(px[1])
+			pixels = append(pixels, temp{x, y})
+		}
+
+		gc := draw2dimg.NewGraphicContext(img)
+		gc2 := draw2dimg.NewGraphicContext(img)
+		gc2.SetStrokeColor(color.RGBA{0xFF, 0, 0, 0xFF})
+		gc2.SetLineWidth(4)
+		gc.SetFillColor(color.RGBA{0xFF, 0, 0, 0xFF})
+		gc.SetLineWidth(8)
+
+		for i, old := range points {
+			gc2.LineTo(old.X, old.Y)
+			gc2.Stroke()
+			gc2.MoveTo(old.X, old.Y)
+
+			draw2dkit.Circle(gc, old.X, old.Y, 5)
+			gc.Fill()
+
+			point := &points[i]
+			px := (int(point.X) + int(point.Y)*v.Vector.width)
+
+			newX := pixels[px].X
+			newY := pixels[px].Y
+			if newX != 0 {
+				point.X += float64(newX / 333333)
+			}
+			if newY != 0 {
+				point.Y += float64(newY / 333333)
+			}
+		}
+
+		//fmt.Printf("p %+v\n", points[0])
+
+		out, _ := os.Create(fmt.Sprintf("temp/composite%d.png", currFrame))
+		encoder.Encode(out, img)
+	}
+
+	return nil
 }

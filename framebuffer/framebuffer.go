@@ -7,6 +7,7 @@ type FrameBuffer struct {
 	components int
 	Buffer     []byte
 	cursor     int
+	length     int
 }
 
 func New(width, height, unitSize, components int) *FrameBuffer {
@@ -17,6 +18,7 @@ func New(width, height, unitSize, components int) *FrameBuffer {
 		components,
 		make([]byte, width*height*unitSize*components),
 		0,
+		width * height * unitSize * components,
 	}
 }
 
